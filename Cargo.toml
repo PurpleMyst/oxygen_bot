@@ -1,5 +1,5 @@
 [package]
-name = "OxygenBot"
+name = "oxygen_bot"
 version = "0.2.0"
 authors = ["Purple Myst <PurpleMyst@users.noreply.github.com>"]
 

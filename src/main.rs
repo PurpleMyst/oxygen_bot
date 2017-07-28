@@ -4,7 +4,7 @@ extern crate regex;
 use regex::Regex;
 
 use std::io::{Read, Write};
-use std::net::*;
+use std::net::TcpStream;
 
 #[derive(Debug)]
 enum Sender {
