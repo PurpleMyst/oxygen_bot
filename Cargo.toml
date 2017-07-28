@@ -1,6 +1,8 @@
 [package]
-name = "krustybot"
-version = "0.1.0"
+name = "OxygenBot"
+version = "0.2.0"
 authors = ["Purple Myst <PurpleMyst@users.noreply.github.com>"]
 
 [dependencies]
+regex = "0.2"
+lazy_static = "0.2.8"
