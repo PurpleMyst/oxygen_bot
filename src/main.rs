@@ -201,6 +201,18 @@ impl OxygenBot {
                 }
                 self.factoids.define_factoid(factoid_name, factoid_contents);
             },
+            "factoids" => {
+                let mut factoid_list = String::new();
+                for (i, factoid) in self.factoids.factoids.keys().enumerate() {
+                    if i > 0 { factoid_list.push(' '); }
+                    factoid_list.push_str(&factoid);
+                }
+
+                if let Sender::User(nick, _, _) = message.sender {
+                    self.send_line(&format!("PRIVMSG {}, :{}: {}",
+                                             &message.params[0], &nick, &factoid_list));
+                }
+            },
             _ => {
                 // TODO: Make peace with the borrow checker.
                 let value;
