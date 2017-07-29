@@ -2,7 +2,8 @@
 extern crate regex;
 
 use regex::Regex;
-
+use std::collections::HashMap;
+use std::fs::File;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
@@ -20,24 +21,25 @@ struct IrcMessage {
     params: Vec<String>,
 }
 
-
 impl IrcMessage {
     fn new(line: &str) -> IrcMessage {
         lazy_static! {
+            // regexp groups
+            // 1: whole prefix
+            // 2: nickname or servername
+            // 3: username
+            // 4: hostname
+            // 5: command
+            // 6: params
             static ref LINE_REGEXP: Regex = Regex::new(r"(:([^! ]+)(?:!([^@]+)@(\S+))? )?(\w+)(?: (.+))?").unwrap();
         }
 
-        let captures = match LINE_REGEXP.captures(line) {
-            Some(x) => x,
-            None => {
-                println!("{:?}", line);
-                panic!("Wrongful line.")
-            }
-        };
+        let captures = LINE_REGEXP.captures(line).expect("Could not match line.");
         let get_capture = |n| String::from(captures.get(n).unwrap().as_str());
 
         let sender;
         if let None = captures.get(1) {
+            // This happens only for PING messages AFAIK.
             sender = Sender::Nobody;
         } else {
             sender = match captures.get(3) {
@@ -55,9 +57,10 @@ impl IrcMessage {
     }
 
     fn split_params(params: String) -> Vec<String> {
-        let mut output: Vec<String> = Vec::new();
+        let mut output = Vec::new();
         let mut parts = params.split_whitespace();
 
+        // TODO: Use a combination of String::find and String::split_at here.
         while let Some(part) = parts.next() {
             if part.starts_with(":") {
                 // We skip the colon.
@@ -80,14 +83,63 @@ impl IrcMessage {
 }
 
 #[derive(Debug)]
+struct Factoids {
+    filename: String,
+    factoids: HashMap<String, String>,
+}
+
+impl Factoids {
+    fn new(filename: &str) -> Self {
+        let mut factoids = HashMap::new();
+
+        if let Ok(mut file) = File::open(filename) {
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).unwrap();
+
+            for line in contents.split("\n") {
+                if let Some(space_index) = line.find(' ') {
+                    let (mnemonic, mut response) = line.split_at(space_index);
+                    response = response.trim();
+                    factoids.insert(String::from(mnemonic), String::from(response));
+                }
+            }
+
+        }
+
+        Factoids {
+            filename: String::from(filename),
+            factoids: factoids,
+        }
+    }
+
+    fn define_factoid(&mut self, name: String, contents: String) {
+        self.factoids.insert(name, contents);
+        self.save_factoids();
+    }
+
+    fn save_factoids(&self) {
+        if let Ok(mut file) = File::create(&self.filename) {
+            let mut file_contents = String::new();
+            for (i, (name, contents)) in self.factoids.iter().enumerate() {
+                if i > 0 { file_contents.push('\n'); }
+                file_contents.push_str(&format!("{} {}", &name, &contents));
+            }
+            write!(file, "{}", file_contents).expect("Could not save factoids!");
+        }
+    }
+}
+
+#[derive(Debug)]
 struct OxygenBot {
-    stream: TcpStream
+    stream: TcpStream,
+    factoids: Factoids,
 }
 
 impl OxygenBot {
     fn new(host: &str, port: u16) -> Self {
         OxygenBot {
-            stream: TcpStream::connect((host, port)).unwrap(),
+            stream: TcpStream::connect((host, port)).expect("Could not connect to server!"),
+            factoids: Factoids::new("factoids.txt"),
         }
     }
 
@@ -96,7 +148,7 @@ impl OxygenBot {
         let mut lines_buf = String::new();
 
         while !lines_buf.ends_with("\r\n") {
-            let n = self.stream.read(&mut read_buf).unwrap();
+            let n = self.stream.read(&mut read_buf).expect("Could not read from socket.");
             if n == 0 { break; }
             lines_buf += &String::from_utf8_lossy(&read_buf[..n]).into_owned()[..];
         }
@@ -105,7 +157,57 @@ impl OxygenBot {
     }
 
     fn send_line(&mut self, line: &str) {
-        write!(self.stream, "{}\r\n", line).unwrap();
+        write!(self.stream, "{}\r\n", line).expect("Could not send to the server.");
+    }
+
+    fn handle_privmsg(&mut self, message: IrcMessage) {
+        if !message.params[1].starts_with("$") { return; }
+
+        let text = &message.params[1][1..];
+
+        let factoid: &str;
+        let params: Vec<&str>;
+        match text.find(' ') {
+            Some(n) => {
+                let (a, b) = text.split_at(n);
+                factoid = a;
+                params = b.split_whitespace().collect();
+            },
+            None => {
+                factoid = text;
+                params = Vec::new();
+            }
+        }
+
+        match factoid {
+            "defact" if params.len() >= 2 => {
+                let factoid_name = String::from(params[0]);
+                let mut factoid_contents = String::new();
+
+                for (i, s) in params[1..].iter().enumerate() {
+                    if i > 0 { factoid_contents.push(' '); }
+                    factoid_contents.push_str(&s);
+                }
+
+                if let Sender::User(nick, _, _) = message.sender {
+                    self.send_line(&format!("PRIVMSG {} :{}: defined {}",
+                                            &message.params[0], &nick, &factoid_name));
+                }
+                self.factoids.define_factoid(factoid_name, factoid_contents);
+            },
+            _ => {
+                // TODO: Make peace with the borrow checker.
+                let value;
+                if let Some(actual_value) = self.factoids.factoids.get(factoid) {
+                    value = actual_value.clone();
+                } else {
+                    return;
+                }
+
+                self.send_line(&format!("PRIVMSG {} :{}", message.params[0], value));
+            }
+        }
+
     }
 
     fn mainloop(&mut self) {
@@ -119,6 +221,8 @@ impl OxygenBot {
 
                 match &message.command[..] {
                     "PING" => self.send_line(&line.replace("PING", "PONG")),
+                    "001" => self.send_line("JOIN #8banana"),
+                    "PRIVMSG" => self.handle_privmsg(message),
                     _ => continue,
                 }
             }
