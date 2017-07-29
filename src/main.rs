@@ -1,7 +1,10 @@
-#[macro_use] extern crate lazy_static;
+#[macro_use]
+extern crate lazy_static;
 extern crate regex;
+extern crate toml;
 
 use regex::Regex;
+use toml::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -257,8 +260,27 @@ impl OxygenBot {
 }
 
 fn main() {
-    // TODO: Make these values loadable from a config line.
-    let mut bot = OxygenBot::new(String::from("OxygenBot"), vec![String::from("#8banana-bottest")],
-                                 "chat.freenode.net", 6667);
+    // TODO: Make these options loadable from a config file.
+    let mut config_file = File::open("oxygen_config.toml").expect("Could not open config.");
+    let mut config_buffer = String::new();
+    config_file.read_to_string(&mut config_buffer).unwrap();
+    let config = config_buffer.parse::<Value>().unwrap();
+
+    // TODO: Refactor this code to not be a nightmare.
+    let fetch_string = |key, prompt| String::from(config[key].as_str().expect(prompt));
+
+    let nickname = fetch_string("nickname", "Invalid nickname.");
+
+    let channels = config["channels"].as_array()
+                                     .expect("Invalid channels.")
+                                     .iter()
+                                     .map(|v| String::from(v.as_str().expect("Invalid channels.")))
+                                     .collect();
+
+    let host = fetch_string("host", "Invalid host.");
+
+    let port = config["port"].as_integer().expect("Invalid port.");
+
+    let mut bot = OxygenBot::new(nickname, channels, &host, port as u16);
     bot.mainloop();
 }

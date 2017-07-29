@@ -1,0 +1,5 @@
+nickname = "OxygenBot"
+channels = ["#8banana-bottest"]
+
+host = "chat.freenode.net"
+port = 6667
