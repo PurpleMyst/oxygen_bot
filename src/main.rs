@@ -131,13 +131,19 @@ impl Factoids {
 
 #[derive(Debug)]
 struct OxygenBot {
+    nickname: String,
+    channels: Vec<String>,
+
     stream: TcpStream,
     factoids: Factoids,
 }
 
 impl OxygenBot {
-    fn new(host: &str, port: u16) -> Self {
+    fn new(nickname: String, channels: Vec<String>, host: &str, port: u16) -> Self {
         OxygenBot {
+            nickname: nickname,
+            channels: channels,
+
             stream: TcpStream::connect((host, port)).expect("Could not connect to server!"),
             factoids: Factoids::new("factoids.txt"),
         }
@@ -211,8 +217,12 @@ impl OxygenBot {
     }
 
     fn mainloop(&mut self) {
-        self.send_line("NICK OxygenBot");
-        self.send_line("USER OxygenBot * * :OxygenBot");
+        { // I <3 the borrow checker.
+            let nickname = self.nickname.clone();
+
+            self.send_line(&format!("NICK {}", nickname));
+            self.send_line(&format!("USER {} * * :{}", nickname, nickname));
+        }
 
         loop {
             for line in self.read_lines() {
@@ -221,7 +231,11 @@ impl OxygenBot {
 
                 match &message.command[..] {
                     "PING" => self.send_line(&line.replace("PING", "PONG")),
-                    "001" => self.send_line("JOIN #8banana"),
+                    "001" => {
+                        for channel in self.channels.clone().iter() {
+                            self.send_line(&format!("JOIN {}", channel));
+                        }
+                    },
                     "PRIVMSG" => self.handle_privmsg(message),
                     _ => continue,
                 }
@@ -231,6 +245,8 @@ impl OxygenBot {
 }
 
 fn main() {
-    let mut bot = OxygenBot::new("chat.freenode.net", 6667);
+    // TODO: Make these values loadable from a config line.
+    let mut bot = OxygenBot::new(String::from("OxygenBot"), vec![String::from("#8banana-bottest")],
+                                 "chat.freenode.net", 6667);
     bot.mainloop();
 }
