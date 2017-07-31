@@ -216,6 +216,30 @@ impl OxygenBot {
                                              &message.params[0], &nick, &factoid_list));
                 }
             },
+            "at" if params.len() >= 2 => {
+                let factoid_name = params[1];
+                let recipient = params[0];
+
+                // TODO: Make peace with the borrow checker, here too.
+                // We could remove the found variable if the self borrow lifetime didn't extend to
+                // the else block.
+                // We initialize it to string::new() to remove the warning about potentially
+                // uninitialized variable usage.
+                let mut value = String::new();
+                let mut found = false;
+
+                if let Some(actual_value) = self.factoids.factoids.get(factoid_name) {
+                    value = actual_value.clone();
+                    found = true;
+                }
+
+                if found {
+                    self.send_line(&format!("PRIVMSG {} :{}: {}", message.params[0], recipient, value));
+                } else if let Sender::User(nick, ..) = message.sender {
+                    self.send_line(&format!("PRIVMSG {} :{}: No such factoid: {}",
+                                            message.params[0], nick, factoid_name));
+                }
+            },
             _ => {
                 // TODO: Make peace with the borrow checker.
                 let value;
@@ -257,30 +281,32 @@ impl OxygenBot {
             }
         }
     }
+
+    fn from_config(filename: &str) -> Self {
+        let mut config_file = File::open(filename).expect("Could not open config.");
+        let mut config_buffer = String::new();
+        config_file.read_to_string(&mut config_buffer).unwrap();
+        let config = config_buffer.parse::<Value>().unwrap();
+
+        // TODO: Refactor this code to not be a nightmare.
+        let fetch_string = |key, prompt| String::from(config[key].as_str().expect(prompt));
+
+        let nickname = fetch_string("nickname", "Invalid nickname.");
+
+        let channels = config["channels"].as_array()
+                                         .expect("Invalid channels.")
+                                         .iter()
+                                         .map(|v| String::from(v.as_str().expect("Invalid channels.")))
+                                         .collect();
+
+        let host = fetch_string("host", "Invalid host.");
+
+        let port = config["port"].as_integer().expect("Invalid port.");
+
+        OxygenBot::new(nickname, channels, &host, port as u16)
+    }
 }
 
 fn main() {
-    // TODO: Make these options loadable from a config file.
-    let mut config_file = File::open("oxygen_config.toml").expect("Could not open config.");
-    let mut config_buffer = String::new();
-    config_file.read_to_string(&mut config_buffer).unwrap();
-    let config = config_buffer.parse::<Value>().unwrap();
-
-    // TODO: Refactor this code to not be a nightmare.
-    let fetch_string = |key, prompt| String::from(config[key].as_str().expect(prompt));
-
-    let nickname = fetch_string("nickname", "Invalid nickname.");
-
-    let channels = config["channels"].as_array()
-                                     .expect("Invalid channels.")
-                                     .iter()
-                                     .map(|v| String::from(v.as_str().expect("Invalid channels.")))
-                                     .collect();
-
-    let host = fetch_string("host", "Invalid host.");
-
-    let port = config["port"].as_integer().expect("Invalid port.");
-
-    let mut bot = OxygenBot::new(nickname, channels, &host, port as u16);
-    bot.mainloop();
+    OxygenBot::from_config("oxygen_config.toml").mainloop();
 }
